@@ -1,69 +1,90 @@
-import { useEffect, useRef } from 'react'
+import { useState } from 'react'
 import { loadCsvFile } from './lib/csv'
 import { analyzeFile, summarizeFile } from './lib/analysis'
+import type { FileAnalysis, FileSummary } from './lib/analysis'
 import { createGeminiClient, createClaudeClient } from './lib/llm'
-import type { LlmClient } from './lib/llm'
 import { diagnoseColumns } from './lib/columnDiagnosis'
+import type { ColumnDiagnosis } from './lib/columnDiagnosis'
+import { loadLlmSettings, saveLlmSettings } from './lib/llmSettings'
+import type { LlmProvider } from './lib/llmSettings'
+import SetupForm from './components/SetupForm'
+import AnalysisResults from './components/AnalysisResults'
 
-// Change this to 'claude' to use Claude instead of Gemini.
-const LLM_PROVIDER: 'gemini' | 'claude' = 'claude'
+type Stage = 'setup' | 'analyzing' | 'results'
+type LlmStatus = 'idle' | 'loading' | 'success' | 'error'
 
 function App() {
-  const hasRunAnalysis = useRef(false)
+    const [stage, setStage] = useState<Stage>('setup')
+    const [analysis, setAnalysis] = useState<FileAnalysis | null>(null)
+    const [summary, setSummary] = useState<FileSummary | null>(null)
+    const [columnDiagnosis, setColumnDiagnosis] = useState<ColumnDiagnosis[] | null>(null)
+    const [llmStatus, setLlmStatus] = useState<LlmStatus>('idle')
+    const [llmError, setLlmError] = useState<string | null>(null)
 
-  useEffect(() => {
-    if (hasRunAnalysis.current) {
-      // React's StrictMode intentionally mounts this component twice in
-      // development to catch effects that aren't safe to run more than
-      // once. That's fine for console.log, but the LLM calls below cost
-      // real money, so this stops the second run from actually happening.
-      return
+    const savedSettings = loadLlmSettings()
+    const initialProvider: LlmProvider = savedSettings ? savedSettings.provider : 'gemini'
+    const initialApiKey = savedSettings ? savedSettings.apiKey : ''
+
+    async function handleAnalyze(file: File, provider: LlmProvider, apiKey: string) {
+        saveLlmSettings({ provider: provider, apiKey: apiKey })
+        setStage('analyzing')
+
+        const result = await loadCsvFile(file)
+        const newAnalysis = analyzeFile(result)
+        const newSummary = summarizeFile(newAnalysis)
+
+        setAnalysis(newAnalysis)
+        setSummary(newSummary)
+        setStage('results')
+
+        if (newSummary.isCritical) {
+            // Nothing usable to send to the LLM.
+            return
+        }
+
+        if (apiKey.trim() === '') {
+            // No key provided - the code-only results are still shown, we
+            // just never attempt an LLM call.
+            return
+        }
+
+        setLlmStatus('loading')
+
+        try {
+            const llmClient = provider === 'gemini' ? createGeminiClient(apiKey) : createClaudeClient(apiKey)
+            const diagnosis = await diagnoseColumns(llmClient, newAnalysis)
+            setColumnDiagnosis(diagnosis)
+            setLlmStatus('success')
+        } catch (error) {
+            const message = error instanceof Error ? error.message : String(error)
+            setLlmError(message)
+            setLlmStatus('error')
+        }
     }
-    hasRunAnalysis.current = true
 
-    const result = loadCsvFile() // Loads a CSV file
-    const analysis = analyzeFile(result) // Analyzes the loaded CSV file
-    const summary = summarizeFile(analysis) // Generates a summary of the analysis
-    console.log(analysis) // Logs the analysis result to the console
-    console.log('CSV Analysis Result:', summary) // Logs the analysis summary to the console
+    return (
+        <div>
+            {stage === 'setup' && (
+                <SetupForm
+                    initialProvider={initialProvider}
+                    initialApiKey={initialApiKey}
+                    onSubmit={handleAnalyze}
+                />
+            )}
 
-    if (summary.isCritical) {
-      // The file is fundamentally unusable, so there is nothing useful to
-      // send to the LLM.
-      return
-    }
+            {stage === 'analyzing' && <p>Loading and analyzing your file...</p>}
 
-    let llmClient: LlmClient
-
-    if (LLM_PROVIDER === 'gemini') {
-      const apiKey = import.meta.env.VITE_GEMINI_API_KEY
-      if (!apiKey) {
-        console.log('No Gemini API key found in .env, skipping LLM analysis.')
-        return
-      }
-      llmClient = createGeminiClient(apiKey)
-    } else {
-      const apiKey = import.meta.env.VITE_ANTHROPIC_API_KEY
-      if (!apiKey) {
-        console.log('No Anthropic API key found in .env, skipping LLM analysis.')
-        return
-      }
-      llmClient = createClaudeClient(apiKey)
-    }
-
-    async function runColumnDiagnosis() {
-      const diagnosis = await diagnoseColumns(llmClient, analysis) //Await is needed for the function to complete before logging the result
-      console.log('Column diagnosis from LLM:', diagnosis)
-    }
-
-    runColumnDiagnosis()
-  },[])
-
-  return (
-    <div>
-      <h1> Data analyzer Assistant</h1>
-    </div>
-  )
+            {stage === 'results' && analysis && summary && (
+                <AnalysisResults
+                    analysis={analysis}
+                    summary={summary}
+                    columnDiagnosis={columnDiagnosis}
+                    llmStatus={llmStatus}
+                    llmError={llmError}
+                />
+            )}
+        </div>
+    )
 }
 
 export default App
