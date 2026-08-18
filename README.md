@@ -38,7 +38,7 @@ The Claude integration uses the official `@anthropic-ai/sdk` with `dangerouslyAl
 
 ## Screenshot
 
-<!-- TODO: add a screenshot of the results page here, e.g. ![Results page](docs/screenshot.png) -->
+![Results page](docs/screenshot.png)
 
 ## Sample data
 
