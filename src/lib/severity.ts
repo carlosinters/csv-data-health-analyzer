@@ -78,7 +78,7 @@ export function getColumnSeverity(column: ColumnAnalysis, rowCount: number): Sev
 
 // A severity can be compared to another using this order, so we can sort
 // columns from worst to best.
-function severityRank(severity: Severity): number {
+export function severityRank(severity: Severity): number {
     if (severity === 'critical') {
         return 2
     } else if (severity === 'warning') {
@@ -86,6 +86,18 @@ function severityRank(severity: Severity): number {
     } else {
         return 0
     }
+}
+
+// The worse of two severities. Used to fold the AI's judgment (which can
+// catch things the local counts cannot, like the same real-world value
+// written in different forms) into the severity already computed from the
+// column's stats, without ever letting the AI downgrade a problem the code
+// already found.
+export function combineSeverity(severityA: Severity, severityB: Severity): Severity {
+    if (severityRank(severityB) > severityRank(severityA)) {
+        return severityB
+    }
+    return severityA
 }
 
 // Returns a new array of columns, sorted worst-first, so the table's
@@ -154,15 +166,28 @@ export function getQualityScore(analysis: FileAnalysis): number {
     return score
 }
 
-// The one-sentence headline shown at the top of the results.
-export function getVerdictLine(analysis: FileAnalysis, score: number): string {
-    let columnsNeedingAttention = 0
-    for (const column of analysis.columns) {
-        if (getColumnSeverity(column, analysis.rowCount) !== 'good') {
-            columnsNeedingAttention = columnsNeedingAttention + 1
-        }
+// A short label for the score, shown next to the number so its meaning is
+// clear without having to read the rest of the page.
+export function getScoreLabel(score: number): string {
+    if (score >= 5) {
+        return 'Excellent'
+    } else if (score === 4) {
+        return 'Good'
+    } else if (score === 3) {
+        return 'Needs review'
+    } else if (score === 2) {
+        return 'Poor'
+    } else {
+        return 'Critical'
     }
+}
 
+// The one-sentence headline shown at the top of the results. Takes the
+// number of columns needing attention as a parameter, rather than
+// recomputing it, so this always agrees with whatever count is shown
+// elsewhere on the page (which may include AI-detected issues that this
+// function has no way to see on its own).
+export function getVerdictLine(analysis: FileAnalysis, score: number, columnsNeedingAttention: number): string {
     const rowsAndColumns = analysis.rowCount + ' rows across ' + analysis.columnCount + ' columns.'
 
     let columnWord = 'columns'

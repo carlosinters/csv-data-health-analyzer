@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import type { FileAnalysis, FileSummary, ColumnAnalysis } from '../lib/analysis'
 import type { ColumnDiagnosis } from '../lib/columnDiagnosis'
-import { getColumnFindings, getColumnSeverity, rankColumns, getQualityScore, getVerdictLine } from '../lib/severity'
+import { getColumnFindings, getColumnSeverity, combineSeverity, severityRank, getVerdictLine, getQualityScore, getScoreLabel } from '../lib/severity'
 import type { Severity } from '../lib/severity'
 import './AnalysisResults.css'
 
@@ -29,6 +29,19 @@ function findDiagnosisForColumn(columnName: string, columnDiagnosis: ColumnDiagn
         }
     }
     return null
+}
+
+// The severity shown to the user: the worse of what the code found from the
+// raw counts and what the AI found by reading the actual example values (it
+// can catch things counts cannot, like a country written three different
+// ways). If the AI hasn't answered yet, this is just the code's severity.
+function getEffectiveSeverity(column: ColumnAnalysis, columnDiagnosis: ColumnDiagnosis[] | null, rowCount: number): Severity {
+    const localSeverity = getColumnSeverity(column, rowCount)
+    const diagnosis = findDiagnosisForColumn(column.name, columnDiagnosis)
+    if (diagnosis === null) {
+        return localSeverity
+    }
+    return combineSeverity(localSeverity, diagnosis.severity)
 }
 
 // Small text-and-color badge for a severity. The text label matters, not
@@ -97,7 +110,12 @@ function AnalysisResults({ analysis, summary, columnDiagnosis, llmStatus, llmErr
 
     let displayedColumns: ColumnAnalysis[]
     if (sortKey === null) {
-        displayedColumns = rankColumns(analysis.columns, analysis.rowCount)
+        displayedColumns = [...analysis.columns]
+        displayedColumns.sort(function (columnA, columnB) {
+            const rankA = severityRank(getEffectiveSeverity(columnA, columnDiagnosis, analysis.rowCount))
+            const rankB = severityRank(getEffectiveSeverity(columnB, columnDiagnosis, analysis.rowCount))
+            return rankB - rankA
+        })
     } else {
         displayedColumns = [...analysis.columns]
         displayedColumns.sort(function (columnA, columnB) {
@@ -120,14 +138,34 @@ function AnalysisResults({ analysis, summary, columnDiagnosis, llmStatus, llmErr
     }
 
     const score = getQualityScore(analysis)
-    const verdictLine = getVerdictLine(analysis, score)
+    const scoreLabel = getScoreLabel(score)
 
-    let columnsNeedingAttention = 0
+    let criticalColumnCount = 0
+    let warningColumnCount = 0
+    let goodColumnCount = 0
     for (const column of analysis.columns) {
-        if (getColumnSeverity(column, analysis.rowCount) !== 'good') {
-            columnsNeedingAttention = columnsNeedingAttention + 1
+        const effectiveSeverity = getEffectiveSeverity(column, columnDiagnosis, analysis.rowCount)
+        if (effectiveSeverity === 'critical') {
+            criticalColumnCount = criticalColumnCount + 1
+        } else if (effectiveSeverity === 'warning') {
+            warningColumnCount = warningColumnCount + 1
+        } else {
+            goodColumnCount = goodColumnCount + 1
         }
     }
+    const columnsNeedingAttention = criticalColumnCount + warningColumnCount
+
+    // The score meter's color follows whichever severity is most common
+    // across the file's columns - red if critical columns outnumber the
+    // rest, yellow if warnings do, green otherwise.
+    let scoreColor: Severity = 'good'
+    if (criticalColumnCount >= warningColumnCount && criticalColumnCount >= goodColumnCount) {
+        scoreColor = 'critical'
+    } else if (warningColumnCount >= goodColumnCount) {
+        scoreColor = 'warning'
+    }
+
+    const verdictLine = getVerdictLine(analysis, score, columnsNeedingAttention)
 
     // The first summary message is the row/column count, already covered
     // by the verdict line above, so the findings list starts after it.
@@ -165,7 +203,7 @@ function AnalysisResults({ analysis, summary, columnDiagnosis, llmStatus, llmErr
     for (const column of displayedColumns) {
         const diagnosis = findDiagnosisForColumn(column.name, columnDiagnosis)
         const findings = getColumnFindings(column, analysis.rowCount)
-        const severity = getColumnSeverity(column, analysis.rowCount)
+        const severity = getEffectiveSeverity(column, columnDiagnosis, analysis.rowCount)
         const missingPercent = Math.round((column.missingCount / analysis.rowCount) * 100)
         const isOpen = openColumnNames.has(column.name)
 
@@ -208,7 +246,10 @@ function AnalysisResults({ analysis, summary, columnDiagnosis, llmStatus, llmErr
                             {diagnosis !== null && (
                                 <div className="ai-diagnosis">
                                     <p><strong>Likely meaning:</strong> {diagnosis.likelyMeaning}</p>
-                                    <p><strong>AI diagnosis:</strong> {diagnosis.diagnosis}</p>
+                                    <p>
+                                        <strong>AI diagnosis:</strong> {diagnosis.diagnosis}{' '}
+                                        {renderSeverityBadge(diagnosis.severity)}
+                                    </p>
                                 </div>
                             )}
 
@@ -230,9 +271,12 @@ function AnalysisResults({ analysis, summary, columnDiagnosis, llmStatus, llmErr
             <h1>Data Analyzer Assistant</h1>
 
             <section className="verdict-card">
-                <div className="score-meter">
-                    <span className="score-number">{score}</span>
-                    <span className="score-max">/5</span>
+                <div className="score-block">
+                    <div className={'score-meter score-meter-' + scoreColor}>
+                        <span className="score-number">{score}</span>
+                        <span className="score-max">/5</span>
+                    </div>
+                    <span className={'score-label score-label-' + scoreColor}>{scoreLabel}</span>
                 </div>
                 <div>
                     <p className="verdict-line">{verdictLine}</p>
