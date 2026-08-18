@@ -58,7 +58,7 @@ function countDuplicateRows(rows: CsvRow[]): number {
         const signature = JSON.stringify(row)
         if (seenRowSignatures.has(signature)) {
             duplicateRowCount = duplicateRowCount + 1
-            console.log('Duplicate row detected:', row)
+            //console.log('Duplicate row detected:', row) for debugging purposes
         } else {
             seenRowSignatures.add(signature)
         }
@@ -167,6 +167,66 @@ export function analyzeFile(result: ParseResult<CsvRow>): FileAnalysis {
         duplicateRowCount: countDuplicateRows(result.data),
         parsingErrorCount: result.errors.length,
         parsingErrorTypes: countParsingErrorTypes(result.errors)
+    }
+}
+
+export type FileSummary = {
+    isCritical: boolean
+    messages: string[]
+}
+
+// Turns a FileAnalysis into plain-English sentences, in order from most
+// to least severe. If the file is fundamentally unusable, we stop after
+// one explanatory message instead of describing data that isn't really there.
+export function summarizeFile(analysis: FileAnalysis): FileSummary {
+    if (!analysis.hasHeaders) {
+        return {
+            isCritical: true,
+            messages: ["We could not identify column headers in this file. Please check that it is a valid CSV."],
+        }
+    }
+
+    if (!analysis.isLoadable) {
+        return {
+            isCritical: true,
+            messages: ["This file has column headers but no data rows to analyze."],
+        }
+    }
+
+    const messages: string[] = []
+
+    messages.push('Your file loaded correctly and has ' + analysis.rowCount + ' rows and ' + analysis.columnCount + ' columns.')
+
+    if (analysis.duplicateRowCount === 0) {
+        messages.push('No duplicate rows were found.')
+    } else {
+        messages.push(analysis.duplicateRowCount + ' rows appear to be exact duplicates of another row.')
+    }
+
+    if (analysis.emptyRowCount === 0) {
+        messages.push('No completely empty rows were found.')
+    } else {
+        messages.push(analysis.emptyRowCount + ' rows are completely empty.')
+    }
+
+    let totalTypeInconsistencies = 0
+    for (const column of analysis.columns) {
+        totalTypeInconsistencies = totalTypeInconsistencies + column.typeInconsistencyCount
+    }
+
+    if (totalTypeInconsistencies === 0) {
+        messages.push('No type inconsistencies were found across your columns.')
+    } else {
+        messages.push(totalTypeInconsistencies + ' values across your columns do not match the type most common in their column.')
+    }
+
+    if (analysis.parsingErrorCount > 0) {
+        messages.push(analysis.parsingErrorCount + ' rows had minor formatting issues while reading this file.')
+    }
+
+    return {
+        isCritical: false,
+        messages,
     }
 
 }

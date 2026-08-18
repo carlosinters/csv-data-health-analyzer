@@ -1,14 +1,14 @@
 import { useEffect } from 'react'
 import { loadCsvFile } from './lib/csv'
-import { analyzeFile } from './lib/analysis'
-
+import { analyzeFile, summarizeFile } from './lib/analysis'
 
 function App() {
   
   useEffect(() => {
     const result = loadCsvFile() // Loads a CSV file
     const analysis = analyzeFile(result) // Analyzes the loaded CSV file
-    console.log('CSV Analysis Result:', analysis) // Logs the analysis result to the console
+    const summary = summarizeFile(analysis) // Generates a summary of the analysis
+    console.log('CSV Analysis Result:', summary) // Logs the analysis result to the console
   },[])
 
   return (
