@@ -11,6 +11,7 @@ export type ColumnAnalysis = {
     typeInconsistencyCount: number
     outlierCount: number
     distinctCount: number
+    sampleValues: string[]
 }
 
 export type FileAnalysis = {
@@ -87,14 +88,21 @@ function percentile(sortedNumbers: number[], percentileToFind: number): number {
     return lowerValue + (upperValue - lowerValue) * fractionBetween
 }
 
-// Uses the IQR (interquartile range) method to count how many numbers are
-// unusually far from the rest of the numbers in the same list. This works
-// the same way whether the numbers are actual values from a numeric column,
-// or the lengths of strings from a text column.
-function countOutliers(numbers: number[]): number {
+type OutlierBounds = {
+    lowerBound: number
+    upperBound: number
+}
+
+// Uses the IQR (interquartile range) method to compute the lower and upper
+// bounds outside of which a number counts as "unusual" for this list. This
+// works the same way whether the numbers are actual values from a numeric
+// column, or the lengths of strings from a text column. Returns null when
+// there are too few values, or the data is too spread out, for "outlier" to
+// be a meaningful idea here.
+function computeOutlierBounds(numbers: number[]): OutlierBounds | null {
     if (numbers.length < 4) {
         // Too few values to meaningfully judge what counts as "unusual".
-        return 0
+        return null
     }
 
     const sortedNumbers = [...numbers]
@@ -117,8 +125,10 @@ function countOutliers(numbers: number[]): number {
     const range = largestValue - smallestValue
 
     if (range === 0) {
-        // Every value is identical, so there is nothing to compare against.
-        return 0
+        // The smallest and largest values are the same. Since sortedNumbers
+        // is sorted, that means every value in the list is identical, so
+        // there is nothing to compare against.
+        return null
     }
 
     const dispersionRatio = interquartileRange / range
@@ -126,21 +136,35 @@ function countOutliers(numbers: number[]): number {
         // The middle half of the data already spans more than half of the
         // full range, so the values are too spread out for "outlier" to be
         // a meaningful idea here.
-        return 0
+        return null
     }
 
-    const lowerBound = firstQuartile - 1.5 * interquartileRange
-    const upperBound = thirdQuartile + 1.5 * interquartileRange
-
-    let outlierCount = 0
-    for (const number of sortedNumbers) {
-        if (number < lowerBound || number > upperBound) {
-            outlierCount = outlierCount + 1
-            //console.log('Outlier detected:', number) // for debugging purposes
-        }
+    return {
+        lowerBound: firstQuartile - 1.5 * interquartileRange,
+        upperBound: thirdQuartile + 1.5 * interquartileRange,
     }
-    
-    return outlierCount
+}
+
+
+// Randomly picks up to maxCount values from an array, without picking the
+// same position twice. The <T> means this works for an array of any type
+// (numbers, strings, whatever) - whatever type you give it is the type you
+// get back.
+function pickRandomValues<T>(values: T[], maxCount: number): T[] {
+    const remainingIndexes: number[] = []
+    for (let index = 0; index < values.length; index = index + 1) {
+        remainingIndexes.push(index)
+    }
+
+    const picked: T[] = []
+    while (picked.length < maxCount && remainingIndexes.length > 0) {
+        const randomPosition = Math.floor(Math.random() * remainingIndexes.length)
+        const chosenIndex = remainingIndexes[randomPosition]
+        picked.push(values[chosenIndex])
+        remainingIndexes.splice(randomPosition, 1) // remove it so we never pick this position again
+    }
+
+    return picked
 }
 
 // Looks at every value in one column and reports:
@@ -155,7 +179,8 @@ function analyzeColumn(columnName: string, rows: CsvRow[]): ColumnAnalysis {
     let stringCount = 0
     let booleanCount = 0
     const numberValues: number[] = []
-    const stringLengths: number[] = []
+    const stringValues: string[] = []
+    const allValues: string[] = [] // every non-missing value, converted to text, for random sampling later
     const distinctValues = new Set<string | number | boolean>()
 
     for (const row of rows) {
@@ -166,7 +191,8 @@ function analyzeColumn(columnName: string, rows: CsvRow[]): ColumnAnalysis {
             continue //skip the rest of the checks for this value since it's missing
         }
 
-        distinctValues.add(value)
+        distinctValues.add(value) //since distinctValues is a Set, it will only keep unique values
+        allValues.push(String(value))
 
         if (typeof value === 'string' && value !== value.trim()) {
             whitespaceIssueCount = whitespaceIssueCount + 1
@@ -177,7 +203,7 @@ function analyzeColumn(columnName: string, rows: CsvRow[]): ColumnAnalysis {
             numberValues.push(value)
         } else if (typeof value === 'string') {
             stringCount = stringCount + 1
-            stringLengths.push(value.length)
+            stringValues.push(value)
         } else if (typeof value === 'boolean') {
             booleanCount = booleanCount + 1
         }
@@ -209,13 +235,51 @@ function analyzeColumn(columnName: string, rows: CsvRow[]): ColumnAnalysis {
     // spellings of the same category ("CA" vs "California") naturally have
     // different lengths without being unusual data.
     const distinctRatio = distinctValues.size / totalNonMissingValues
-    const looksCategorical = distinctRatio < 0.5
+    const looksCategorical = distinctRatio < 0.5 // Do more than 50% of the values repeat? Then it's probably categorical.
 
+    // Find outliers, and keep the actual values that were flagged (not just
+    // a count) so a few real examples can be included in sampleValues below.
     let outlierCount = 0
+    const outlierExamples: string[] = []
+
     if (mostCommonType === 'number') {
-        outlierCount = countOutliers(numberValues)
+        const bounds = computeOutlierBounds(numberValues)
+        if (bounds !== null) {
+            for (const value of numberValues) {
+                if (value < bounds.lowerBound || value > bounds.upperBound) {
+                    outlierCount = outlierCount + 1
+                    outlierExamples.push(String(value))
+                }
+            }
+        }
     } else if (mostCommonType === 'string' && !looksCategorical) {
-        outlierCount = countOutliers(stringLengths)
+        const stringLengths: number[] = []
+        for (const value of stringValues) {
+            stringLengths.push(value.length)
+        }
+
+        const bounds = computeOutlierBounds(stringLengths)
+        if (bounds !== null) {
+            for (const value of stringValues) {
+                if (value.length < bounds.lowerBound || value.length > bounds.upperBound) {
+                    outlierCount = outlierCount + 1
+                    outlierExamples.push(value)
+                }
+            }
+        }
+    }
+
+    // Build the sample shown to the LLM later: start with a few real
+    // outlier examples (if any), then fill the rest with random picks from
+    // the whole column so the sample is not biased toward file order.
+    const maxSampleValues = 8
+    const maxOutlierExamples = 3
+    const sampleValues = pickRandomValues(outlierExamples, maxOutlierExamples)
+
+    const remainingSlots = maxSampleValues - sampleValues.length
+    const randomFillValues = pickRandomValues(allValues, remainingSlots)
+    for (const value of randomFillValues) {
+        sampleValues.push(value)
     }
 
     return {
@@ -226,6 +290,7 @@ function analyzeColumn(columnName: string, rows: CsvRow[]): ColumnAnalysis {
         typeInconsistencyCount,
         outlierCount,
         distinctCount: distinctValues.size,
+        sampleValues,
     }
 }
 
