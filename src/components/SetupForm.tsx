@@ -1,13 +1,15 @@
 import { useState } from 'react'
 import type { LlmProvider } from '../lib/llmSettings'
+import './SetupForm.css'
 
 type SetupFormProps = {
     initialProvider: LlmProvider
     initialApiKey: string
+    fileError: string | null
     onSubmit: (file: File, provider: LlmProvider, apiKey: string) => void
 }
 
-function SetupForm({ initialProvider, initialApiKey, onSubmit }: SetupFormProps) {
+function SetupForm({ initialProvider, initialApiKey, fileError, onSubmit }: SetupFormProps) {
     const [selectedFile, setSelectedFile] = useState<File | null>(null)
     const [provider, setProvider] = useState<LlmProvider>(initialProvider)
     const [apiKey, setApiKey] = useState<string>(initialApiKey)
@@ -36,37 +38,43 @@ function SetupForm({ initialProvider, initialApiKey, onSubmit }: SetupFormProps)
     }
 
     return (
-        <form onSubmit={handleSubmit}>
-            <h1>Data Analyzer Assistant</h1>
-            <p>Select a CSV file to get an honest first read on what is inside it.</p>
+        <div className="setup-page">
+            <form className="setup-form" onSubmit={handleSubmit}>
+                <h1>Data Analyzer Assistant</h1>
+                <p className="setup-intro">Select a CSV file to get an honest first read on what is inside it.</p>
 
-            <label>
-                CSV file
-                <input type="file" accept=".csv" onChange={handleFileChange} />
-            </label>
+                {fileError !== null && (
+                    <p className="file-error">Could not read that file: {fileError}</p>
+                )}
 
-            <label>
-                AI provider (optional, adds plain-English insights)
-                <select value={provider} onChange={handleProviderChange}>
-                    <option value="gemini">Google Gemini</option>
-                    <option value="claude">Anthropic Claude</option>
-                </select>
-            </label>
+                <label className="form-field">
+                    <span className="form-label">CSV file</span>
+                    <input type="file" accept=".csv" onChange={handleFileChange} />
+                </label>
 
-            <label>
-                API key (optional)
-                <input
-                    type="password"
-                    value={apiKey}
-                    onChange={handleApiKeyChange}
-                    placeholder="Paste your API key here"
-                />
-            </label>
+                <label className="form-field">
+                    <span className="form-label">AI provider (optional, adds plain-English insights)</span>
+                    <select value={provider} onChange={handleProviderChange}>
+                        <option value="gemini">Google Gemini</option>
+                        <option value="claude">Anthropic Claude</option>
+                    </select>
+                </label>
 
-            <button type="submit" disabled={selectedFile === null}>
-                Analyze
-            </button>
-        </form>
+                <label className="form-field">
+                    <span className="form-label">API key (optional)</span>
+                    <input
+                        type="password"
+                        value={apiKey}
+                        onChange={handleApiKeyChange}
+                        placeholder="Paste your API key here"
+                    />
+                </label>
+
+                <button type="submit" className="submit-button" disabled={selectedFile === null}>
+                    Analyze
+                </button>
+            </form>
+        </div>
     )
 }
 

@@ -6,12 +6,22 @@ import { createGeminiClient, createClaudeClient } from './lib/llm'
 import { diagnoseColumns } from './lib/columnDiagnosis'
 import type { ColumnDiagnosis } from './lib/columnDiagnosis'
 import { loadLlmSettings, saveLlmSettings } from './lib/llmSettings'
-import type { LlmProvider } from './lib/llmSettings'
+import type { LlmProvider, LlmSettings } from './lib/llmSettings'
 import SetupForm from './components/SetupForm'
 import AnalysisResults from './components/AnalysisResults'
 
 type Stage = 'setup' | 'analyzing' | 'results'
 type LlmStatus = 'idle' | 'loading' | 'success' | 'error'
+
+// Reads localStorage once, the first time the component is created, instead
+// of on every single render.
+function getInitialLlmSettings(): LlmSettings {
+    const savedSettings = loadLlmSettings()
+    if (savedSettings !== null) {
+        return savedSettings
+    }
+    return { provider: 'gemini', apiKey: '' }
+}
 
 function App() {
     const [stage, setStage] = useState<Stage>('setup')
@@ -20,18 +30,30 @@ function App() {
     const [columnDiagnosis, setColumnDiagnosis] = useState<ColumnDiagnosis[] | null>(null)
     const [llmStatus, setLlmStatus] = useState<LlmStatus>('idle')
     const [llmError, setLlmError] = useState<string | null>(null)
-
-    const savedSettings = loadLlmSettings()
-    const initialProvider: LlmProvider = savedSettings ? savedSettings.provider : 'gemini'
-    const initialApiKey = savedSettings ? savedSettings.apiKey : ''
+    const [fileError, setFileError] = useState<string | null>(null)
+    const [initialSettings] = useState<LlmSettings>(getInitialLlmSettings)
 
     async function handleAnalyze(file: File, provider: LlmProvider, apiKey: string) {
         saveLlmSettings({ provider: provider, apiKey: apiKey })
+        setFileError(null)
         setStage('analyzing')
 
-        const result = await loadCsvFile(file)
-        const newAnalysis = analyzeFile(result)
-        const newSummary = summarizeFile(newAnalysis)
+        let newAnalysis: FileAnalysis
+        let newSummary: FileSummary
+
+        try {
+            const result = await loadCsvFile(file)
+            newAnalysis = analyzeFile(result)
+            newSummary = summarizeFile(newAnalysis)
+        } catch (error) {
+            let message = 'Unknown error'
+            if (error instanceof Error) {
+                message = error.message
+            }
+            setFileError(message)
+            setStage('setup')
+            return
+        }
 
         setAnalysis(newAnalysis)
         setSummary(newSummary)
@@ -51,23 +73,43 @@ function App() {
         setLlmStatus('loading')
 
         try {
-            const llmClient = provider === 'gemini' ? createGeminiClient(apiKey) : createClaudeClient(apiKey)
+            let llmClient
+            if (provider === 'gemini') {
+                llmClient = createGeminiClient(apiKey)
+            } else {
+                llmClient = createClaudeClient(apiKey)
+            }
+
             const diagnosis = await diagnoseColumns(llmClient, newAnalysis)
             setColumnDiagnosis(diagnosis)
             setLlmStatus('success')
         } catch (error) {
-            const message = error instanceof Error ? error.message : String(error)
+            let message = 'Unknown error'
+            if (error instanceof Error) {
+                message = error.message
+            }
             setLlmError(message)
             setLlmStatus('error')
         }
+    }
+
+    function handleReset() {
+        setStage('setup')
+        setAnalysis(null)
+        setSummary(null)
+        setColumnDiagnosis(null)
+        setLlmStatus('idle')
+        setLlmError(null)
+        setFileError(null)
     }
 
     return (
         <div>
             {stage === 'setup' && (
                 <SetupForm
-                    initialProvider={initialProvider}
-                    initialApiKey={initialApiKey}
+                    initialProvider={initialSettings.provider}
+                    initialApiKey={initialSettings.apiKey}
+                    fileError={fileError}
                     onSubmit={handleAnalyze}
                 />
             )}
@@ -81,6 +123,7 @@ function App() {
                     columnDiagnosis={columnDiagnosis}
                     llmStatus={llmStatus}
                     llmError={llmError}
+                    onReset={handleReset}
                 />
             )}
         </div>
