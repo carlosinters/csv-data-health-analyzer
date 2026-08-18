@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import type { FileAnalysis, FileSummary, ColumnAnalysis } from '../lib/analysis'
-import type { ColumnDiagnosis } from '../lib/columnDiagnosis'
+import type { ColumnDiagnosis, FileDiagnosis } from '../lib/columnDiagnosis'
 import { getColumnFindings, getColumnSeverity, combineSeverity, severityRank, getVerdictLine, getQualityScore, getScoreLabel } from '../lib/severity'
 import type { Severity } from '../lib/severity'
 import './AnalysisResults.css'
@@ -8,10 +8,32 @@ import './AnalysisResults.css'
 type AnalysisResultsProps = {
     analysis: FileAnalysis
     summary: FileSummary
-    columnDiagnosis: ColumnDiagnosis[] | null
+    fileDiagnosis: FileDiagnosis | null
     llmStatus: 'idle' | 'loading' | 'success' | 'error'
     llmError: string | null
     onReset: () => void
+}
+
+// The kickoff-questions section should only appear once the LLM has
+// answered with something usable - exactly 3 non-empty questions and a
+// non-empty piece of advice. A malformed or incomplete answer is treated
+// the same as no answer at all, rather than showing a broken section.
+function hasUsableKickoffData(fileDiagnosis: FileDiagnosis | null): boolean {
+    if (fileDiagnosis === null) {
+        return false
+    }
+    if (fileDiagnosis.kickoffQuestions.length !== 3) {
+        return false
+    }
+    for (const question of fileDiagnosis.kickoffQuestions) {
+        if (question.trim() === '') {
+            return false
+        }
+    }
+    if (fileDiagnosis.advice.trim() === '') {
+        return false
+    }
+    return true
 }
 
 type SortKey = 'name' | 'type' | 'missing' | 'distinct' | 'issues'
@@ -70,10 +92,15 @@ function getSortValue(column: ColumnAnalysis, key: SortKey, rowCount: number): s
     }
 }
 
-function AnalysisResults({ analysis, summary, columnDiagnosis, llmStatus, llmError, onReset }: AnalysisResultsProps) {
+function AnalysisResults({ analysis, summary, fileDiagnosis, llmStatus, llmError, onReset }: AnalysisResultsProps) {
     const [sortKey, setSortKey] = useState<SortKey | null>(null)
     const [sortDirection, setSortDirection] = useState<SortDirection>('ascending')
     const [openColumnNames, setOpenColumnNames] = useState<Set<string>>(new Set())
+
+    let columnDiagnosis: ColumnDiagnosis[] | null = null
+    if (fileDiagnosis !== null) {
+        columnDiagnosis = fileDiagnosis.columns
+    }
 
     if (summary.isCritical) {
         return (
@@ -266,6 +293,14 @@ function AnalysisResults({ analysis, summary, columnDiagnosis, llmStatus, llmErr
         }
     }
 
+    const showKickoffSection = llmStatus === 'success' && hasUsableKickoffData(fileDiagnosis)
+    const kickoffQuestionItems: React.ReactElement[] = []
+    if (showKickoffSection && fileDiagnosis !== null) {
+        for (let index = 0; index < fileDiagnosis.kickoffQuestions.length; index = index + 1) {
+            kickoffQuestionItems.push(<li key={index}>{fileDiagnosis.kickoffQuestions[index]}</li>)
+        }
+    }
+
     return (
         <div className="results-page">
             <h1>Data Analyzer Assistant</h1>
@@ -318,6 +353,14 @@ function AnalysisResults({ analysis, summary, columnDiagnosis, llmStatus, llmErr
                     </div>
                 )}
             </section>
+
+            {showKickoffSection && fileDiagnosis !== null && (
+                <section className="kickoff-section">
+                    <h2>Ask the client</h2>
+                    <ul className="kickoff-questions">{kickoffQuestionItems}</ul>
+                    <p className="kickoff-advice"><strong>Advice for the client:</strong> {fileDiagnosis.advice}</p>
+                </section>
+            )}
 
             <section>
                 <h2>Columns</h2>

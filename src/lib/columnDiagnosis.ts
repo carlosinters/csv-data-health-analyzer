@@ -8,11 +8,20 @@ export type ColumnDiagnosis = {
     severity: 'good' | 'warning' | 'critical'
 }
 
-// The shape the LLM must follow when answering - one entry per column, in
-// the same order the columns were given. Written in plain, standard JSON
-// Schema; each provider's adapter (in llm.ts) handles translating this into
-// whatever exact format that provider needs.
-const columnDiagnosisSchema = {
+// The full answer the LLM gives about the file: one diagnosis per column,
+// plus a file-level wrap-up a consultant can act on directly - the specific
+// questions to ask the client at kickoff, and one line of advice for the
+// manager relaying this to the client.
+export type FileDiagnosis = {
+    columns: ColumnDiagnosis[]
+    kickoffQuestions: string[]
+    advice: string
+}
+
+// The shape the LLM must follow when answering. Written in plain, standard
+// JSON Schema; each provider's adapter (in llm.ts) handles translating this
+// into whatever exact format that provider needs.
+const fileDiagnosisSchema = {
     type: 'object',
     properties: {
         columns: {
@@ -28,8 +37,13 @@ const columnDiagnosisSchema = {
                 required: ['columnName', 'likelyMeaning', 'diagnosis', 'severity'],
             },
         },
+        kickoffQuestions: {
+            type: 'array',
+            items: { type: 'string' },
+        },
+        advice: { type: 'string' },
     },
-    required: ['columns'],
+    required: ['columns', 'kickoffQuestions', 'advice'],
 }
 
 // Turns the code-computed stats for every column into a plain-text prompt.
@@ -41,6 +55,9 @@ function buildColumnDiagnosisPrompt(analysis: FileAnalysis): string {
     prompt = prompt + '3. Look at the example values themselves, not just the counts, for problems the counts cannot show: the same real-world value written in more than one way (for example a country appearing as "USA", "United States", and "US", or a unit written as "kg" and "kilograms"). If you notice this kind of inconsistency, describe it in your diagnosis even though it may not show up as a missing value, a type mismatch, or an outlier.\n'
     prompt = prompt + 'Then assign a severity for the column: "critical" if the issues make the data unusable as given, "warning" if you found a real problem worth a person\'s attention (including a same-value-written-differently issue from step 3, even if the statistics look clean), or "good" if you see no real issue.\n'
     prompt = prompt + 'Only use the information provided below. Do not invent facts about the data that are not shown here.\n\n'
+    prompt = prompt + 'After reviewing every column, also answer these two things about the file as a whole:\n'
+    prompt = prompt + '- kickoffQuestions: exactly 3 specific questions a consultant should ask this client at kickoff, grounded in the actual issues you found above (for example, if a country column has inconsistent spellings, ask whether that column is entered manually). Do not ask generic questions that would apply to any dataset.\n'
+    prompt = prompt + '- advice: one short, plain-English sentence the IT manager could say to the client about the overall state of this data.\n\n'
 
     for (const column of analysis.columns) {
         prompt = prompt + 'Column name: ' + column.name + '\n'
@@ -56,8 +73,8 @@ function buildColumnDiagnosisPrompt(analysis: FileAnalysis): string {
     return prompt
 }
 
-export async function diagnoseColumns(llmClient: LlmClient, analysis: FileAnalysis): Promise<ColumnDiagnosis[]> {
+export async function diagnoseFile(llmClient: LlmClient, analysis: FileAnalysis): Promise<FileDiagnosis> {
     const prompt = buildColumnDiagnosisPrompt(analysis)
-    const result = await llmClient.generateJson(prompt, columnDiagnosisSchema) as { columns: ColumnDiagnosis[] }
-    return result.columns
+    const result = await llmClient.generateJson(prompt, fileDiagnosisSchema) as FileDiagnosis
+    return result
 }

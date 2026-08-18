@@ -3,8 +3,8 @@ import { loadCsvFile } from './lib/csv'
 import { analyzeFile, summarizeFile } from './lib/analysis'
 import type { FileAnalysis, FileSummary } from './lib/analysis'
 import { createGeminiClient, createClaudeClient } from './lib/llm'
-import { diagnoseColumns } from './lib/columnDiagnosis'
-import type { ColumnDiagnosis } from './lib/columnDiagnosis'
+import { diagnoseFile } from './lib/columnDiagnosis'
+import type { FileDiagnosis } from './lib/columnDiagnosis'
 import { loadLlmSettings, saveLlmSettings } from './lib/llmSettings'
 import type { LlmProvider, LlmSettings } from './lib/llmSettings'
 import SetupForm from './components/SetupForm'
@@ -27,7 +27,7 @@ function App() {
     const [stage, setStage] = useState<Stage>('setup')
     const [analysis, setAnalysis] = useState<FileAnalysis | null>(null)
     const [summary, setSummary] = useState<FileSummary | null>(null)
-    const [columnDiagnosis, setColumnDiagnosis] = useState<ColumnDiagnosis[] | null>(null)
+    const [fileDiagnosis, setFileDiagnosis] = useState<FileDiagnosis | null>(null)
     const [llmStatus, setLlmStatus] = useState<LlmStatus>('idle')
     const [llmError, setLlmError] = useState<string | null>(null)
     const [fileError, setFileError] = useState<string | null>(null)
@@ -80,8 +80,8 @@ function App() {
                 llmClient = createClaudeClient(apiKey)
             }
 
-            const diagnosis = await diagnoseColumns(llmClient, newAnalysis)
-            setColumnDiagnosis(diagnosis)
+            const diagnosis = await diagnoseFile(llmClient, newAnalysis)
+            setFileDiagnosis(diagnosis)
             setLlmStatus('success')
         } catch (error) {
             let message = 'Unknown error'
@@ -97,7 +97,7 @@ function App() {
         setStage('setup')
         setAnalysis(null)
         setSummary(null)
-        setColumnDiagnosis(null)
+        setFileDiagnosis(null)
         setLlmStatus('idle')
         setLlmError(null)
         setFileError(null)
@@ -120,7 +120,7 @@ function App() {
                 <AnalysisResults
                     analysis={analysis}
                     summary={summary}
-                    columnDiagnosis={columnDiagnosis}
+                    fileDiagnosis={fileDiagnosis}
                     llmStatus={llmStatus}
                     llmError={llmError}
                     onReset={handleReset}

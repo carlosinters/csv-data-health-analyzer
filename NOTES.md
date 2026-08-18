@@ -15,7 +15,7 @@ The first outlier detector flagged values in categorical columns like `ship_coun
 ## What I cut, and why
 
 - **Drag-and-drop file upload** — a plain `<input type="file">` covers the requirement (upload in the browser) with far less code and risk in an 8–10 hour budget.
-- **A second LLM call for a file-level summary/kickoff-questions report** — I designed the prompt for it early on, but decided the single column-diagnosis call already satisfied "one good use beats three shallow ones," and a second call would add cost and latency without a clearly bigger payoff.
+- **A second LLM call for a higher file-level summary and detailed kickoff-questions in the company context** — I designed the prompt for it early on, but decided the single column-diagnosis call already satisfied "one good use beats three shallow ones," and a second call would add cost and latency without a clearly bigger payoff but could potentially be more aligned with the company tone and pace for the meeting giving more value to the manager.
 - **Configurable severity thresholds** — the "20% missing = critical" style thresholds are fixed constants rather than a settings panel, since this is a first-read tool, not a configurable pipeline.
 
 ## Time spent
