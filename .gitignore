@@ -15,6 +15,9 @@ dist-ssr
 .env.*
 !.env.example
 
+# LibreOffice/Excel lock files, created while a CSV is open in a spreadsheet app
+.~lock.*#
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json
